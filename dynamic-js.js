@@ -30,49 +30,51 @@ var React = {
         }
 
         var toElt = (child) => {
-            if (child instanceof Node) return child;
-            else if (Array.isArray(child)) {
-                var result = document.createElement("template");
-                result.append(...child.map(toElt));
-                return result
+            switch (typeof child) {
+                case "function":
+                    let result = watch(child);
+                    return toElt(result);
+                case "string":
+                case "boolean":
+                case "number":
+                    return document.createTextNode(child);
+                default:
+                    if (child instanceof Node) return child;
+                    else if (Array.isArray(child)) {
+                        let result = document.createElement("template");
+                        result.append(...child.map(toElt));
+                        return result
+                    }
+                    else if (child instanceof Calculated) {
+                        var calculated = child;
+                        var startElt = document.createComment("dyn" + calculated.id);
+                        var currentElts = [];
+                        var refreshDom = () => {
+                            if (startElt.parentElement === null) setTimeout(refreshDom, 1)
+                            var dynamicResult = calculated._getValue();
+                            var newElt = toElt(dynamicResult);
+                            var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
+                            currentElts?.forEach(e => e.remove());
+                            var insertionPoint = startElt.nextSibling;
+                            var parentElt = startElt.parentElement;
+                            newElts.forEach(e => {
+                                if (insertionPoint) {
+                                    parentElt.insertBefore(e, insertionPoint)
+                                    insertionPoint = e.nextSibling;
+                                }
+                                else parentElt.append(e);
+                            });
+                            currentElts = newElts;
+                        };
+                        calculated._addListener(() => refreshDom());
+                        setTimeout(refreshDom);
+                        return startElt;
+                    }
+                    else {
+                        return document.createTextNode(JSON.stringify(child));
+                    }
             }
-            else {
-                switch (typeof child) {
-                    case "string":
-                    case "boolean":
-                    case "number":
-                        return document.createTextNode(child);
-                    default:
-                        if (child instanceof DynamicValue) {
-                            var dynValue = child;
-                            var startElt = document.createComment("Dyn" + dynValue.getId());
-                            var currentElts = [];
-                            var refreshDom = () => {
-                                if (startElt.parentElement === null) setTimeout(refreshDom, 1)
-                                var dynamicResult = dynValue._getValue();
-                                var newElt = toElt(dynamicResult);
-                                var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
-                                currentElts?.forEach(e => e.remove());
-                                var insertionPoint = startElt.nextSibling;
-                                var parentElt = startElt.parentElement;
-                                newElts.forEach(e => {
-                                    if (insertionPoint) {
-                                        parentElt.insertBefore(e, insertionPoint)
-                                        insertionPoint = e.nextSibling;
-                                    }
-                                    else parentElt.append(e);
-                                });
-                                currentElts = newElts;
-                            };
-                            dynValue._addListener(() => refreshDom());
-                            setTimeout(refreshDom);
-                            return startElt;
-                        }
-                        else {
-                            return document.createTextNode(JSON.stringify(child));
-                        }
-                }
-            }
+
         };
 
         children.forEach(child => {
@@ -102,19 +104,12 @@ function ref(value) {
     return new Ref(value);
 }
 
-class DynamicValue {
+class HasValue {
     #listeners = [];
     #value;
-    #id;
-    static #dynCounter = 0;
 
     constructor(value) {
         this.#value = value;
-        this.#id = ++(DynamicValue.#dynCounter);
-    }
-
-    getId() {
-        return this.#id;
     }
 
     _addListener(listener) {
@@ -143,7 +138,7 @@ class DynamicValue {
     }
 }
 
-class Ref extends DynamicValue {
+class Ref extends HasValue {
     get value() {
         React.watcher?.onGettingRefValue(this);
         return this._getValue();
@@ -151,6 +146,18 @@ class Ref extends DynamicValue {
 
     set value(newValue) {
         this._setValue(newValue);
+    }
+
+}
+
+class Calculated extends HasValue {
+    id;
+    static #idCounter = 0;
+
+    constructor(value) {
+        super(value);
+        this.id = ++(Calculated.#idCounter);
+        console.log("calc#" + this.id + ": " + value);
     }
 
 }
@@ -165,14 +172,17 @@ function watch(fn) {
         var functionResult = fn();
         var dirty = false;
         if (watchedRefs.size) {
-            functionResult = new DynamicValue(functionResult);
+            functionResult = new Calculated(functionResult);
             watchedRefs.forEach(ref => {
                 ref._addListener(() => {
                     if (!dirty) {
                         dirty = true;
                         setTimeout(() => {
-                            functionResult._setValue(fn());
-                            dirty = false;
+                            try {
+                                functionResult._setValue(fn());
+                            } finally {
+                                dirty = false;
+                            }
                         });
                     }
                 });
