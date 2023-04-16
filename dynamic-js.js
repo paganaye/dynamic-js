@@ -2,79 +2,96 @@ var React = {
     watcher: null,
     createElement: function (type, props, ...children) {
         var elt;
-        if (type) {
-            if (type instanceof Function) {
-                elt = type(props, ...children);
-                return elt;
-            }
-            else {
-                elt = document.createElement(type)
-                if (props) {
-                    Object.keys(props).forEach(key => {
-                        try {
-                            if (key === "className") {
-                                elt.setAttribute("class", props[key]);
-                            } else if (key === "style") {
-                                Object.keys(props[key]).forEach(styleKey => {
-                                    elt.style[styleKey] = props[key][styleKey];
-                                });
-                            } else if (key === "onClick") {
-                                elt.addEventListener("click", props[key]);
-                            } else {
-                                elt.setAttribute(key, props[key]);
-                            }
-                        } catch (error) {
-                            console.error(error);
+        if (type instanceof Function) {
+            elt = type(props, ...children);
+            return elt;
+        }
+        else {
+            elt = document.createElement(type || "template")
+            if (props) {
+                Object.keys(props).forEach(key => {
+                    try {
+                        if (key === "className") {
+                            elt.setAttribute("class", props[key]);
+                        } else if (key === "style") {
+                            Object.keys(props[key]).forEach(styleKey => {
+                                elt.style[styleKey] = props[key][styleKey];
+                            });
+                        } else if (key === "onClick") {
+                            elt.addEventListener("click", props[key]);
+                        } else {
+                            elt.setAttribute(key, props[key]);
                         }
-                    });
-                }
+                    } catch (error) {
+                        console.error(error);
+                    }
+                });
             }
         }
-        var toNode = (child) => {
+
+        var toElt = (child) => {
             if (child instanceof Node) return child;
-            switch (typeof child) {
-                case "string":
-                case "boolean":
-                case "number":
-                    return document.createTextNode(child);
-                default:
-                    if (child instanceof DynamicValue) {
-                        var dynamicResult = child._getValue();
-                        if (!(dynamicResult instanceof Node)) dynamicResult = document.createTextNode(dynamicResult);
-                        child._addListener((newValue) => {
-                            if (newValue instanceof Node) {
-                                dynamicResult.replaceWith(newValue);
-                                dynamicResult = newValue;
-                            }
-                            else dynamicResult.textContent = newValue;
-                        });
-                        return dynamicResult;
-                    }
-                    else {
-                        return document.createTextNode(JSON.stringify(child));
-                    }
+            else if (Array.isArray(child)) {
+                var result = document.createElement("template");
+                result.append(...child.map(toElt));
+                return result
+            }
+            else {
+                switch (typeof child) {
+                    case "string":
+                    case "boolean":
+                    case "number":
+                        return document.createTextNode(child);
+                    default:
+                        if (child instanceof DynamicValue) {
+                            var dynValue = child;
+                            var startElt = document.createComment("Dyn" + dynValue.getId());
+                            var currentElts = [];
+                            var refreshDom = () => {
+                                if (startElt.parentElement === null) setTimeout(refreshDom, 1)
+                                var dynamicResult = dynValue._getValue();
+                                var newElt = toElt(dynamicResult);
+                                var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
+                                currentElts?.forEach(e => e.remove());
+                                var insertionPoint = startElt.nextSibling;
+                                var parentElt = startElt.parentElement;
+                                newElts.forEach(e => {
+                                    if (insertionPoint) {
+                                        parentElt.insertBefore(e, insertionPoint)
+                                        insertionPoint = e.nextSibling;
+                                    }
+                                    else parentElt.append(e);
+                                });
+                                currentElts = newElts;
+                            };
+                            dynValue._addListener(() => refreshDom());
+                            setTimeout(refreshDom);
+                            return startElt;
+                        }
+                        else {
+                            return document.createTextNode(JSON.stringify(child));
+                        }
+                }
             }
         };
 
-        var childrenElt = [];
         children.forEach(child => {
-            var childElt = (Array.isArray(child)) ? child.map(toNode) : toNode(child);
-            if (Array.isArray(childElt)) childrenElt.push(...childElt);
-            else childrenElt.push(childElt);
+            var childElt = (Array.isArray(child)) ? child.map(toElt) : toElt(child);
+            if (Array.isArray(child)) {
+                elt.append(...child);
+            } else if (childElt.tagName === 'TEMPLATE') {
+                elt.append(...childElt.children);
+            } else elt.append(childElt);
         });
-        if (elt) {
-            elt.append(...childrenElt);
-            return elt;
-        }
-        return childrenElt;
+        return elt;
     }
 }
 
-function render(renderFunction, container) {
+function render(renderFunctionOrResult, container) {
     try {
-        var renderResult = renderFunction instanceof Node || Array.isArray(renderFunction) ? renderFunction : renderFunction();
-        if (Array.isArray(renderResult)) container.replaceChildren(...renderResult);
-        else container.replaceChildren(renderResult);
+        if (typeof renderFunctionOrResult === 'function') renderFunctionOrResult = renderFunctionOrResult();
+        if (renderFunctionOrResult.tagName === 'TEMPLATE') container.replaceChildren(...renderFunctionOrResult.children);
+        else container.replaceChildren(renderFunctionOrResult);
     } catch (error) {
         console.error(error);
         container.replaceChildren(React.createElement("pre", null, error.toString()));
@@ -88,9 +105,16 @@ function ref(value) {
 class DynamicValue {
     #listeners = [];
     #value;
+    #id;
+    static #dynCounter = 0;
 
     constructor(value) {
         this.#value = value;
+        this.#id = ++(DynamicValue.#dynCounter);
+    }
+
+    getId() {
+        return this.#id;
     }
 
     _addListener(listener) {

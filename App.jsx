@@ -1,9 +1,9 @@
-const counter = await import('./Counter');
+const { Counter } = await import('./Counter');
 
-console.log("App.jsx starting...", counter);
+console.log("App.jsx starting...", Counter);
 
-render(<div>
+render(<>
     <h1>App.jsx</h1>
-    <counter.Counter />
-</div>, document.getElementById('app'));
+    <Counter />
+</>, document.getElementById('app'));
 
