@@ -29,56 +29,8 @@ var React = {
             }
         }
 
-        var toElt = (child) => {
-            switch (typeof child) {
-                case "function":
-                    let result = watch(child);
-                    return toElt(result);
-                case "string":
-                case "boolean":
-                case "number":
-                    return document.createTextNode(child);
-                default:
-                    if (child instanceof Node) return child;
-                    else if (Array.isArray(child)) {
-                        let result = document.createElement("template");
-                        result.append(...child.map(toElt));
-                        return result
-                    }
-                    else if (child instanceof Calculated) {
-                        var calculated = child;
-                        var startElt = document.createComment("dyn" + calculated.id);
-                        var currentElts = [];
-                        var refreshDom = () => {
-                            if (startElt.parentElement === null) setTimeout(refreshDom, 1)
-                            var dynamicResult = calculated._getValue();
-                            var newElt = toElt(dynamicResult);
-                            var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
-                            currentElts?.forEach(e => e.remove());
-                            var insertionPoint = startElt.nextSibling;
-                            var parentElt = startElt.parentElement;
-                            newElts.forEach(e => {
-                                if (insertionPoint) {
-                                    parentElt.insertBefore(e, insertionPoint)
-                                    insertionPoint = e.nextSibling;
-                                }
-                                else parentElt.append(e);
-                            });
-                            currentElts = newElts;
-                        };
-                        calculated._addListener(() => refreshDom());
-                        setTimeout(refreshDom);
-                        return startElt;
-                    }
-                    else {
-                        return document.createTextNode(JSON.stringify(child));
-                    }
-            }
-
-        };
-
         children.forEach(child => {
-            var childElt = (Array.isArray(child)) ? child.map(toElt) : toElt(child);
+            var childElt = (Array.isArray(child)) ? child.map(React.toElt) : React.toElt(child);
             if (Array.isArray(child)) {
                 elt.append(...child);
             } else if (childElt.tagName === 'TEMPLATE') {
@@ -86,14 +38,66 @@ var React = {
             } else elt.append(childElt);
         });
         return elt;
+    },
+
+    toElt(child) {
+        switch (typeof child) {
+            case "function":
+                let result = watch(child);
+                return React.toElt(result);
+            case "string":
+            case "boolean":
+            case "number":
+                return document.createTextNode(child);
+            default:
+                if (child instanceof Node) return child;
+                else if (Array.isArray(child)) {
+                    let result = document.createElement("template");
+                    result.append(...child.map(React.toElt));
+                    return result
+                }
+                else if (child instanceof Calculated) {
+                    var calculated = child;
+                    var startElt = document.createComment("dyn" + calculated.id);
+                    var currentElts = [];
+                    var replaceDOM = () => {
+                        currentElts = React.replaceDOM(startElt, calculated._getValue(), currentElts)
+                    };
+                    calculated._addListener(replaceDOM);
+                    setTimeout(replaceDOM);
+                    return startElt;
+                }
+                else {
+                    return document.createTextNode(JSON.stringify(child));
+                }
+        }
+
+    },
+
+    replaceDOM(startElt, dynamicResult, currentElts) {
+        currentElts?.forEach(e => e.remove());
+        var newElt = React.toElt(dynamicResult);
+        var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
+        var insertionPoint = startElt.nextSibling;
+        var parentElt = startElt.parentElement;
+        newElts.forEach(e => {
+            if (insertionPoint) {
+                parentElt.insertBefore(e, insertionPoint)
+                insertionPoint = e.nextSibling;
+            }
+            else parentElt.append(e);
+        });
+        return newElts;
     }
+
 }
 
 function render(renderFunctionOrResult, container) {
     try {
-        if (typeof renderFunctionOrResult === 'function') renderFunctionOrResult = renderFunctionOrResult();
-        if (renderFunctionOrResult.tagName === 'TEMPLATE') container.replaceChildren(...renderFunctionOrResult.children);
-        else container.replaceChildren(renderFunctionOrResult);
+        var dynamicResult = React.toElt(renderFunctionOrResult)
+        var newElt = React.toElt(dynamicResult);
+        var newElts = newElt.tagName === 'TEMPLATE' ? Array.from(newElt.children) : [newElt];
+        container.replaceChildren(...newElts);
     } catch (error) {
         console.error(error);
         container.replaceChildren(React.createElement("pre", null, error.toString()));
@@ -101,7 +105,8 @@ function render(renderFunctionOrResult, container) {
 }
 
 function ref(value) {
-    return new Ref(value);
+    if (value instanceof Ref) return value;
+    else return new Ref(value);
 }
 
 class HasValue {
