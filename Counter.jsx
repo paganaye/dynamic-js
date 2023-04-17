@@ -1,3 +1,7 @@
+// var acorn = await import("acorn");
+// var jsx = await import("acorn-jsx");
+// acorn.Parser.extend(jsx()).parse("my(<jsx/>, 'code');");
+
 export function Counter({ value }) {
   var count = ref(value ?? 1);
   return <>

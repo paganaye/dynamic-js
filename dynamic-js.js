@@ -7,6 +7,8 @@ var React = {
             return elt;
         }
         else {
+            if (!type) type = "template";
+            console.log("Creating " + type + " element");
             elt = document.createElement(type || "template")
             if (props) {
                 Object.keys(props).forEach(key => {
@@ -17,10 +19,22 @@ var React = {
                             Object.keys(props[key]).forEach(styleKey => {
                                 elt.style[styleKey] = props[key][styleKey];
                             });
-                        } else if (key === "onClick") {
-                            elt.addEventListener("click", props[key]);
+                        } else if (key.startsWith("on") && typeof props[key] === "function") {
+                            console.log("Attaching " + key + " to " + elt.tagName);
+                            elt.addEventListener(key.substring(2).toLowerCase(), props[key]);
                         } else {
-                            elt.setAttribute(key, props[key]);
+                            var value = props[key];
+                            if (typeof value === "function") {
+                                value = watch(value);
+                                if (value instanceof Calculated) {
+                                    elt.setAttribute(key, value._getValue());
+                                    value._addListener(() => {
+                                        props[key] = value._getValue();
+                                        elt.setAttribute(key, value._getValue());
+                                    });
+                                }
+                            }
+                            else elt.setAttribute(key, props[key]);
                         }
                     } catch (error) {
                         console.error(error);
@@ -193,6 +207,8 @@ function watch(fn) {
                 });
             });
         }
+
+        console.log("Function", fn, " watching", Array.from(watchedRefs.values()).map(v => JSON.stringify(v.value)).join(','))
         return functionResult;
     } finally {
         React.watcher = previousWatcher;
